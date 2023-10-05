@@ -1,5 +1,8 @@
 *.txt
-
+!/control.txt
+/*sublime-workspace
+.DS_Store
+/neuronGM
 /Makefile
 /Makefile.in
 /aclocal.m4

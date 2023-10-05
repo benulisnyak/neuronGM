@@ -10,12 +10,13 @@ bin_PROGRAMS = neuronGM
 neuronGM_SOURCES = src/main.cc src/kernel.cc src/kernel.h
 
 #neuronGM_LDADD = -lgsl -lgslcblas -lgcov -lsim
-neuronGM_LDADD = -lsim -lrt -lgsl -lgslcblas
+neuronGM_LDADD = -lgsl -lgslcblas -lsim
+#neuronGM_LDADD = -L${HOME}/lib -lsim -lrt -lgsl -lgslcblas
 if DEBUG
 neuronGM_LDFLAGS = -fprofile-arcs -pg -ggdb
 neuronGM_CPPFLAGS = -I /usr/local/include/eigen3 -fprofile-arcs -ftest-coverage -pg -ggdb
 else
-neuronGM_CPPFLAGS = -I /usr/local/include/eigen3 
+neuronGM_CPPFLAGS = -I${HOME}/include 
 endif
 # dist_noinst_SCRIPTS = autogen.sh
 

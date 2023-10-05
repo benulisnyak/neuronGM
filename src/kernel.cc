@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Javier G. Orlandi <orlandi@ecm.ub.edu>
+ * Copyright (c) 2013-2023 Javier G. Orlandi <javier.orlandi@ucalgary.ca>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -19,6 +19,7 @@
 #include "gsl/gsl_randist.h"
 #include "gsl/gsl_sf_gamma.h"
 #include "gsl/gsl_statistics_double.h"
+#include "gsl/gsl_sf_pow_int.h"
 #include "kernel.h"
 
 // TODOS
@@ -38,6 +39,8 @@ void Kernel::initialize(Sim& sim)
   // Load simulation parameters
   sim.get("x", x);
   sim.get("m0", m0);
+  sim.get("p0", p0, 0);
+  sim.get("p1", p1, 0);
   sim.get("steps", steps, 100000);
   sim.get("maxVectorSize", maxVectorSize, 5000000);
   sim.get("networkLinksFile", networkLinksFile);
@@ -51,6 +54,8 @@ void Kernel::initialize(Sim& sim)
   sim.get("outputExtension", outputExtension);
   sim.get("outputAvalancheStatistics", outputAvalancheStatistics);
   sim.get("outputPercolationPoint", outputPercolationPoint);
+  
+  sim.get("avalancheOnlyHack", avalancheOnlyHack, false);
   
   sim.get("networkOutputLinksFile", networkOutputLinksFile);
   sim.get("networkOutputWeightsFile", networkOutputWeightsFile);
@@ -68,6 +73,13 @@ void Kernel::initialize(Sim& sim)
   sim.get("xMinimumStep", xMinimumStep, 0.1);
   sim.get("percolationThreshold", percolationThreshold, 1.0);
 
+  sim.get("depression", depression, false);
+  if(depression)
+  {
+    sim.get("beta", beta, 0.9);
+    sim.get("tauD", tau_D, 50);
+  }
+
   string tmpstr;
   sim.get("model", tmpstr, "GM");
   if(tmpstr == "GM")
@@ -76,11 +88,21 @@ void Kernel::initialize(Sim& sim)
     model = MODEL_BP;
   else if(tmpstr == "RNM")
     model = MODEL_RNM;
+  else if(tmpstr == "RNMBP")
+    model = MODEL_RNMBP;
+  else if(tmpstr == "GMP0")
+    model = MODEL_GMP0;
+  else if(tmpstr == "REALBP")
+    model = MODEL_REALBP;
+  else if(tmpstr == "REALBPS")
+    model = MODEL_REALBPS;
+  else if(tmpstr == "RNMREALBPS")
+    model = MODEL_RNMREALBPS;
   else
   {
     model = MODEL_GM;
     cout << "Warning: model not well defined." << endl
-         << "Current possibilities: GM, BP and RNM. Using GM..." << endl;
+         << "Current possibilities: GM, GMP0, BP and RNM. Using GM..." << endl;
   }
 
   xCurrentStep = xInitialStep;
@@ -94,7 +116,7 @@ void Kernel::initialize(Sim& sim)
   // Initialize other variables
 
   // Number of active inputs (used to calculate the probabilities)
-  activeInputs = VectorXi::Zero(N);
+  activeInputs = VectorXd::Zero(N);
 
   // Means calculations
   if(calculateMeans)
@@ -104,6 +126,8 @@ void Kernel::initialize(Sim& sim)
     // Firing probability
     meanP = VectorXd::Zero(steps);
     stdP = VectorXd::Zero(steps);
+    if(depression)
+      meanD = VectorXd::Zero(steps);
 
     // Branching parameter
     meanBranching = VectorXd::Zero(steps);
@@ -112,26 +136,58 @@ void Kernel::initialize(Sim& sim)
   }
 
   // Current and previous neuron state
-  S = VectorXi::Zero(N);
-  Sprev = VectorXi::Zero(N);
+  S = VectorXd::Zero(N);
+  Sprev = VectorXd::Zero(N);
 
   // Current and previous spike index - For avalanches only
   if(calculateAvalanches)
   {
-    I = VectorXi::Zero(N);
-    Iprev = VectorXi::Zero(N);
-    inputVector = VectorXi::Zero(N);
+    I = VectorXd::Zero(N);
+    Iprev = VectorXd::Zero(N);
+    inputVector = VectorXd::Zero(N);
+  }
+
+  // For synaptic depression
+  if(depression)
+  {
+    D = VectorXd::Ones(N);
+    cout << "Short term synaptic depression is ON" << endl;
+  }
+  else
+  {
+    cout << "Short term synaptic depression is OFF" << endl;
   }
 
   percolationEvents = 0;
+  // Set the real BP probabilities
+  if(model == MODEL_REALBP || model == MODEL_REALBPS)
+  {
+    cout << "Setting P_m(0) = " << p0 << ", P_m(1) = " << p1 << ", m0 = " << Kmax << " for the real branching process..." << endl;
+    m0 = Kmax+1;
+  }
+  if(model == MODEL_RNMREALBPS)
+  {
+    cout << "Setting P_m(0) = " << p0 << ", P_m(1) = " << p1 << ", m0 = " << Kmax << " for the RNM real branching process..." << endl;
+    m0 = Kmax+1;
+  }
   // Precompute the Normalized Complementary Incomplete Gamma Function
   precomputeGammaFunction();
 
   // If we are using the BP model set p0 to 0
-  if(model == MODEL_BP)
+  if(model == MODEL_BP || model == MODEL_RNMBP)
   {
     cout << "Setting P_m(0) = 0 for the branching process..." << endl;
     P_m(0) = 0;
+  }
+  if(model == MODEL_GMP0)
+  {
+    cout << "Setting P_m(0) = " << p0 << " for the GMP0 model..." << endl;
+    P_m(0) = p0;
+    if(p0 == 0)
+    {
+      cout << "P_M(0)=0. Defaulting to the branching process model..." << endl;
+      model = MODEL_BP;
+    }
   }
   // Open continous output streams
   string ofile;
@@ -195,6 +251,7 @@ void Kernel::initialize(Sim& sim)
     avalancheLinksData = ArrayXXi::Zero(maxVectorSize, 5);
     avalancheParentRelations = ArrayXXi::Zero(maxVectorSize, 2);
   }
+  prevStepClean = false;
 }
 
 void Kernel::resetSimulation()
@@ -209,11 +266,23 @@ void Kernel::resetSimulation()
 
 void Kernel::precomputeGammaFunction(bool verbose)
 {
-  int vsize = std::max(Kmax, m0);
+  double vsize = std::max(Kmax, double(m0));
   P_m = VectorXd::Ones(vsize+1);
   for(int m = 0; m < m0; m++)
     P_m(m) = gsl_sf_gamma_inc_P(m0-m, x);
 
+  // Overwrite the P_m for the branching model
+  if(model == MODEL_REALBP)
+  {
+    P_m(0) = p0;
+    for(int m = 1; m < m0; m++)
+      P_m(m) = 1-gsl_sf_pow_int(1-p1, m);
+  }
+  if(model == MODEL_REALBPS || model == MODEL_RNMREALBPS)
+  {
+    for(int m = 0; m < m0; m++)
+      P_m(m) = 1-(1-p0)*gsl_sf_pow_int(1-p1, m);
+  }
   if(homogeneousGM)
   {
     for(int m = 1; m <= vsize; m++)
@@ -273,7 +342,7 @@ void Kernel::saveSpikes(bool partial)
   {
     outputSpikesStream << spikeNeuron(i) << " " << spikeTime(i) << " "
                        << spikeIndex(i) << " " << spikeParent(i) + spikeGlobalIndex(0)
-		       << " " << spikeGlobalIndex(i) << " " << spikeClusterSize(i) << " " << spikeClusterDuration(i, 1)-spikeClusterDuration(i, 0) << " " << spikeInputs(i) << " " << spikeClusterInputs(i) << "\n";
+           << " " << spikeGlobalIndex(i) << " " << spikeClusterSize(i) << " " << spikeClusterDuration(i, 1)-spikeClusterDuration(i, 0) << " " << spikeInputs(i) << " " << spikeClusterInputs(i) << "\n";
   }
 }
 
@@ -352,24 +421,8 @@ void Kernel::resetSpikes(bool partial)
     spikeClusterDuration.setZero();
     spikeClusterDuration.topRows(numUnsavedSpikes) = tmpVector2;
 
-    //std::cout << " Done!\n";
-
-    //std::cout << "CS: " << currentSpike << " LS: " << numSpikesToSave << " US: " << numUnsavedSpikes << endl;
     currentSpike = numUnsavedSpikes;
-
-
-    // Check that the current spike info is empty and the previous one is not
-    /*std::cout << "Should be empty: " << spikeNeuron(currentSpike) << " " << spikeTime(currentSpike) << " "
-                       << spikeIndex(currentSpike) << " " << spikeParent(currentSpike)
-           << " " << spikeGlobalIndex(currentSpike) << " " << spikeClusterSize(currentSpike) << " " << spikeClusterDuration(currentSpike, 1)-spikeClusterDuration(currentSpike, 0) << " " << spikeInputs(currentSpike) << " " << spikeClusterInputs(currentSpike) << "\n";
-
-    std::cout << "Should be not empty: " << spikeNeuron(currentSpike-1) << " " << spikeTime(currentSpike-1) << " "
-                       << spikeIndex(currentSpike-1) << " " << spikeParent(currentSpike-1) 
-           << " " << spikeGlobalIndex(currentSpike-1) << " " << spikeClusterSize(currentSpike-1) << " " << spikeClusterDuration(currentSpike-1, 1)-spikeClusterDuration(currentSpike-1, 0) << " " << spikeInputs(currentSpike-1) << " " << spikeClusterInputs(currentSpike-1) << "\n";
-
-    std::cout << "The first: " << spikeNeuron(0) << " " << spikeTime(0) << " "
-                       << spikeIndex(0) << " " << spikeParent(0) 
-           << " " << spikeGlobalIndex(0) << " " << spikeClusterSize(0) << " " << spikeClusterDuration(0, 1)-spikeClusterDuration(0, 0) << " " << spikeInputs(0) << " " << spikeClusterInputs(0) << "\n";*/
+    
   }
   else
   {
@@ -419,7 +472,7 @@ void Kernel::loadNetwork()
   }
   linksFile.close();
   weightsFile.close();
-  RS = SparseMatrix<int,RowMajor>(N, N);
+  RS = SparseMatrix<double,RowMajor>(N, N);
   RS.setFromTriplets(tripletList.begin(), tripletList.end());
 
   // To store the output effective network
@@ -432,11 +485,11 @@ void Kernel::loadNetwork()
   RST = RS.transpose();
   // Calculate maximum input connectivity (columns in RS)
   Kmax = 0;
-  int tmpK;
+  double tmpK;
   for (int k=0; k<RS.outerSize(); ++k)
   {
     tmpK = 0;
-    for (SparseMatrix<int>::InnerIterator it(RS,k); it; ++it)
+    for (SparseMatrix<double>::InnerIterator it(RS,k); it; ++it)
     {
       tmpK += it.value();
     }
@@ -456,12 +509,12 @@ void Kernel::loadNetwork()
 
 int Kernel::initializeRNG()
 {
-	struct timeval tv;
-	gettimeofday(&tv,NULL);
+  struct timeval tv;
+  gettimeofday(&tv,NULL);
   struct tm *tm = localtime(&tv.tv_sec);
-	int seed = abs(int(tv.tv_usec/10+tv.tv_sec*100000));	// Creates the seed based on actual time
-	rng = gsl_rng_alloc(gsl_rng_taus2);
-	gsl_rng_set(rng,seed);			// Seeds the previously created RNG
+  int seed = abs(int(tv.tv_usec/10+tv.tv_sec*100000));  // Creates the seed based on actual time
+  rng = gsl_rng_alloc(gsl_rng_taus2);
+  gsl_rng_set(rng,seed);      // Seeds the previously created RNG
 
   cout << endl << "RNG initialized. Seed: " << seed << endl
        << "Current date: " << tm->tm_mday << "/" << tm->tm_mon +1 << "/" << tm->tm_year + 1900 << endl
@@ -568,6 +621,20 @@ int Kernel::step()
     case MODEL_RNM:
       val = stepGM();
       break;
+    case MODEL_RNMBP:
+      val = stepGM();
+      break;
+    case MODEL_GMP0:
+      val = stepGM();
+      break;
+    case MODEL_REALBP:
+      val = stepGM();
+      break;
+    case MODEL_REALBPS:
+      val = stepGM();
+    case MODEL_RNMREALBPS:
+      val = stepGM();
+      break;
     default:
       val = stepGM();
   }
@@ -579,22 +646,38 @@ int Kernel::stepGM()
 {
   // RNM SPECIFIC
   // Shuffle the previous state before computing anything
-  if(model == MODEL_RNM)
+  if(model == MODEL_RNM || model == MODEL_RNMBP || model == MODEL_RNMREALBPS)
   {
-    int *c_ptr;
+    double *c_ptr;
+    if(calculateAvalanches)
+    {
+      // Clone the rng
+      gsl_rng* tmpRng = gsl_rng_clone(rng); 
+      c_ptr = Iprev.data();
+      gsl_ran_shuffle(tmpRng, c_ptr, N, sizeof(int));
+      Iprev = Map<VectorXd>(c_ptr, N);
+    }
     c_ptr = Sprev.data();
     gsl_ran_shuffle(rng, c_ptr, N, sizeof(int));
-    Sprev = Map<VectorXi>(c_ptr, N);
-  }
+    Sprev = Map<VectorXd>(c_ptr, N);
 
+  }
   // Calculate the active inputs
-  activeInputs = RST*Sprev;
+  if(depression)
+    activeInputs = RST*(D.cwiseProduct(Sprev));
+  else
+    activeInputs = RST*Sprev;
 
   // Calculate the firing probabilities
   VectorXd P(N);
   for(int i = 0; i < N; i++)
   {
-    P(i) = P_m(activeInputs(i));
+    if(depression)
+    {
+      P(i) = (P_m((int)floor(activeInputs(i)+1))-P_m((int)floor(activeInputs(i))))*(activeInputs(i)-floor(activeInputs(i)))+P_m((int)floor(activeInputs(i)));
+    }
+    else
+      P(i) = P_m((int)round(activeInputs(i)));
   }
   // Reset current state
   S.setZero();
@@ -602,14 +685,21 @@ int Kernel::stepGM()
   {
     I.setZero();
   }
-
-  // BP SPECIFIC 
+  // BP SPECIFIC
   // if there are no active inputs activate one neuron at random (better, set its firing probability to 1)
-  if(model == MODEL_BP && activeInputs.sum() == 0)
+  // The avalancheOnlyHack is for when we only compute avalanche statistics and we don't want to wait for a random activitation in case p0 is very very small
+  if(((model == MODEL_BP || model == MODEL_RNMBP || model == MODEL_REALBP || model == MODEL_REALBPS || model == MODEL_RNMREALBPS) && P_m(0) == 0 && activeInputs.sum() == 0) || (avalancheOnlyHack && activeInputs.sum() == 0))
   {
-    //S(gsl_rng_uniform_int(rng, N)) = 1;
-    P(gsl_rng_uniform_int(rng, N)) = 1;
-    Iprev.setZero(); // Just in case
+    // We need one empty step
+    if(prevStepClean)
+    {
+      //S(gsl_rng_uniform_int(rng, N)) = 1;
+      P(gsl_rng_uniform_int(rng, N)) = 1;
+      Iprev.setZero(); // Just in case
+      prevStepClean = false;
+    }
+    else
+      prevStepClean = true;
   }
 
   // Check if they fire
@@ -619,7 +709,11 @@ int Kernel::stepGM()
     {
       // There's a new spike
       S(i) = 1;
-
+      // Update depression
+      if(depression)
+      {
+        D(i) *= D(i)*beta;
+      }
       spikeNeuron(currentSpike) = i;
       spikeTime(currentSpike) = currentStep;
       spikeIndex(currentSpike) = currentSpike;
@@ -627,19 +721,28 @@ int Kernel::stepGM()
       spikeParent(currentSpike) = currentSpike;
       spikeGlobalIndex(currentSpike) = totalSpikeCount;
       spikeClusterSize(currentSpike) = 1;
+
       spikeClusterInputs(currentSpike) = activeInputs(i);
+
       spikeClusterDuration(currentSpike, 0) = currentStep;
       spikeClusterDuration(currentSpike, 1) = currentStep;
 
       if(calculateAvalanches)
       {
-        stepCalculateAvalanches(i);
+        int ret = stepCalculateAvalanches(i);
+        if(ret == 1)
+          return 1;
       }
 
       currentSpike++;
       totalSpikeCount++;
 
     }
+  }
+  // Do the evolution of depression
+  if(depression)
+  {
+    D += 1/tau_D*(VectorXd::Ones(N)-D); // Should be a vector operation
   }
   // Calculate the means
   if(calculateMeans)
@@ -655,6 +758,13 @@ int Kernel::stepGM()
     c_ptr = tmpVector.data();
     meanP(currentStep) = gsl_stats_mean(c_ptr, 1, N);
     stdP(currentStep) = gsl_stats_sd(c_ptr, 1, N);
+    if(depression)
+    {
+      //double *d_ptr;
+      //tmpVector = D.cast<double>(); // Probably don't need all thoses castas since they are doubles now
+      c_ptr = D.data();
+      meanD(currentStep) = gsl_stats_mean(c_ptr, 1, N);
+    }
 
     currentBranching = Sprev.cwiseProduct(RS*S);
     double currActive = Sprev.sum();
@@ -692,7 +802,7 @@ int Kernel::stepGM()
     Iprev = I;
 
   // Check for percolation and reset the system
-  if(Sprev.sum() >= N*percolationThreshold)
+  if(Sprev.sum() >= N*percolationThreshold && !depression)
   {
     cout << "Percolation reached";
     Sprev.setZero();
@@ -754,8 +864,8 @@ int Kernel::stepGM()
   }
   return 0;
 }
-
-void Kernel::stepCalculateAvalanches(int activeNeuron)
+// There's a bug here somewhere
+int Kernel::stepCalculateAvalanches(int activeNeuron)
 {
   int i = activeNeuron;
   I(i) = currentSpike;
@@ -763,7 +873,7 @@ void Kernel::stepCalculateAvalanches(int activeNeuron)
   // of the RS matrix if I have more than 1 active input
   if(activeInputs(i) > 0)
   {
-    for (SparseMatrix<int>::InnerIterator it(RS,i); it; ++it)
+    for (SparseMatrix<double>::InnerIterator it(RS,i); it; ++it)
     {
       int j = it.row();
       // I'm only iterating over the non-zero entries in the RS column
@@ -824,7 +934,8 @@ void Kernel::stepCalculateAvalanches(int activeNeuron)
         else if( parent < 0)
         {
           std::cout << "Error! Found a negative parent, avalanches might be too big, try increasing the maxVectorSize\n";
-          exit(1);
+          //exit(1);
+          return 1;
         }
         // If the parent is the same, there's nothing to be done
         else
@@ -857,6 +968,7 @@ void Kernel::stepCalculateAvalanches(int activeNeuron)
       currentLink++;
     }
   }
+  return 0;
 }
 
 void Kernel::finalize(Sim& sim)
@@ -881,7 +993,10 @@ void Kernel::finalize(Sim& sim)
     ofs.precision(10);
     for (int i = 0; i < currentStep; i++)
     {
-      ofs << meanActivity(i) << " " << meanP(i) << " " << stdP(i) << " " << meanBranching(i) << " " << stdBranching(i) << " " << meanBranching2(i) << endl;
+      ofs << meanActivity(i) << " " << meanP(i) << " " << stdP(i) << " " << meanBranching(i) << " " << stdBranching(i) << " " << meanBranching2(i);
+      if(depression)
+        ofs << " " << meanD(i);
+      ofs << endl;
     }
     ofs.close();
   }
@@ -1067,5 +1182,3 @@ std::string sec2string(long seconds)
 
   return text.str();
 }
-
-

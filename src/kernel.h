@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Javier G. Orlandi <orlandi@ecm.ub.edu>
+ * Copyright (c) 2013-2023 Javier G. Orlandi <javier.orlandi@ucalgary.ca>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -26,7 +26,7 @@
 
 //#define STD_DATA_COUNT 1000000
 
-enum modelType { MODEL_GM, MODEL_BP, MODEL_RNM };
+enum modelType { MODEL_GM, MODEL_BP, MODEL_REALBP, MODEL_REALBPS, MODEL_RNM, MODEL_GMP0, MODEL_RNMBP, MODEL_RNMREALBPS};
 
 using namespace std;
 using namespace Eigen;
@@ -45,7 +45,7 @@ class Kernel
     // Step for the neuronGM model
     int stepGM();
 
-    void stepCalculateAvalanches(int activeNeuron);
+    int stepCalculateAvalanches(int activeNeuron);
     int initializeRNG();
     void precomputeGammaFunction(bool verbose = true);
 
@@ -71,20 +71,27 @@ class Kernel
     int model;
     double x, xInitialStep, xMinimumStep, xCurrentStep;
     double percolationThreshold;
+    double p0, p1;
+    double beta;
+    double tau_D;
     int m0;
-    int steps, Kmax, networkSize, currentStep, N, maxVectorSize;
+    int steps, networkSize, currentStep, N, maxVectorSize;
+    double Kmax;
     int currentSpike, totalSpikeCount, parent, currentLink, currentParentRelation;
+    bool depression;
 
     // eigen variables
     VectorXd P_m;
-    VectorXd meanActivity, meanP, stdP, meanBranching, stdBranching, meanBranching2;
-    VectorXi activeInputs, currentBranching;
-    VectorXi S, Sprev;
-    VectorXi I, Iprev, prevCorrelatedSpikes;
-    VectorXi inputVector;
+    VectorXd meanActivity, meanP, stdP, meanBranching, stdBranching, meanBranching2, meanD;
+    VectorXd activeInputs;
+    VectorXd currentBranching;
+    VectorXd S, Sprev;
+    VectorXd I, Iprev, prevCorrelatedSpikes;
+    VectorXd inputVector;
+    VectorXd D;
 
-    SparseMatrix<int>  RS, RST;
-    SparseMatrix<int>  RSeffective, RSeffectiveOriginal;
+    SparseMatrix<double>  RS, RST;
+    SparseMatrix<double>  RSeffective, RSeffectiveOriginal;
 
     VectorXi spikeNeuron, spikeTime;
     VectorXi spikeIndex, spikeParent, spikeGlobalIndex, spikeInputs;
@@ -99,6 +106,7 @@ class Kernel
     int rngSeed;
 
     bool calculateMeans;
+    bool avalancheOnlyHack;
     bool calculateAvalanches, calculateEffectiveNetwork, saveSpikesData;
     bool fastAvalancheCalculation, fastPercolationCalculation;
     bool saveFullAvalancheData;
@@ -106,6 +114,7 @@ class Kernel
     bool runFindPercolationPoint;
     time_t start, partial, end;
     bool tmpDebug;
+    bool prevStepClean;
 };
 
 std::string sec2string(double seconds);
