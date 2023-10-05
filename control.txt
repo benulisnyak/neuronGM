@@ -4,6 +4,7 @@ x = 3.45;
 m0 = 10;
 steps = 500000;
 maxVectorSize = 5000000;
+model = "GM";
 
 networkLinksFile = "networks/RG/links.txt";
 networkWeightsFile = "networks/RG/weights.txt";
@@ -20,6 +21,8 @@ outputMeanProbability = "MeanProbability";
 outputPercolationSteps = "PercolationSteps";
 outputAvalancheStatistics = "AvalancheStatistics";
 outputExtension = ".txt";
+outputMeans = "means";
+outputPercolationPoint = "percPoint";
 
 networkOutputLinksFile = "outputLinks.txt";
 networkOutputWeightsFile = "outputWeights.txt";
@@ -29,3 +32,4 @@ calculateAvalanches = False;
 calculateEffectiveNetwork = True;
 saveSpikesData = True;
 fastAvalancheCalculation = True;
+

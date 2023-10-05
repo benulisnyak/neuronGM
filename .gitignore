@@ -1,4 +1,3 @@
-*.txt
 !/control.txt
 /*sublime-workspace
 .DS_Store

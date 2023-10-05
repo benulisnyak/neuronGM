@@ -39,3 +39,4 @@ RUN aclocal \
     && automake --add-missing \
     && ./configure
 
+RUN make
