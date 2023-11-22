@@ -1,0 +1,20 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: ' neuronGM'
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Javier
+    family-names: Orlandi
+    email: javier.orlandi@ucalgary.ca
+    affiliation: University of Calgary
+    orcid: 'https://orcid.org/0000-0001-5683-1717'
+repository-code: 'https://github.com/orlandi/neuronGM'
+abstract: >-
+  Original code to simulate Stochastic Quorum Percolation
+  (SQP) model
+license: MIT
