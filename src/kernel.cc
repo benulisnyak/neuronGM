@@ -677,6 +677,10 @@ int Kernel::stepGM()
       P(i) = (P_m((int)floor(activeInputs(i)+1))-P_m((int)floor(activeInputs(i))))*(activeInputs(i)-floor(activeInputs(i)))+P_m((int)floor(activeInputs(i)));
     }
     else
+      if (activeInputs(i) < 0)
+      {
+        activeInputs(i) = 0;
+      }
       P(i) = P_m((int)round(activeInputs(i)));
   }
   // Reset current state
